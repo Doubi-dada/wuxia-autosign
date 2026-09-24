@@ -1,0 +1,18 @@
+# 敏感: 登录态与角色配置(通过 GitHub Secrets 注入)
+state.json
+config.json
+
+# playwright-cli 运行日志
+.playwright-cli/
+
+# 登录助手生成的 GitHub Secrets 文本(内含凭证)
+WUXIA_STATE.txt
+WUXIA_CONFIG.txt
+
+# 逆向产物与临时文件
+*.png
+*.txt
+index0925.js
+gmi_act.desc.js
+snap_logged.yaml
+__pycache__/

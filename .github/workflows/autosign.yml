@@ -1,0 +1,39 @@
+name: 天刀周周载愿自动签到
+
+on:
+  schedule:
+    # 每小时的第 5 分钟触发(UTC)。北京 09:05 = UTC 01:05
+    - cron: "5 * * * *"
+  # 允许在 Actions 页面手动点一下立即跑
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 还原登录态与配置
+        env:
+          WUXIA_STATE: ${{ secrets.WUXIA_STATE }}
+          WUXIA_CONFIG: ${{ secrets.WUXIA_CONFIG }}
+        run: |
+          echo "$WUXIA_STATE" | base64 -d > state.json
+          echo "$WUXIA_CONFIG" | base64 -d > config.json
+          ls -l state.json config.json
+
+      # 下面几个是可选的 GitHub Variables, 填了就覆盖 config.json 里的同名设置,
+      # 不填则用登录时生成的默认值(奖励序号3 / 时间09:05)
+      - name: 执行签到
+        env:
+          WUXIA_GIFT_INDEX: ${{ vars.WUXIA_GIFT_INDEX }}
+          WUXIA_RUN_TIME: ${{ vars.WUXIA_RUN_TIME }}
+          WUXIA_PUSH_KEY: ${{ vars.WUXIA_PUSH_KEY }}
+        run: python autosign.py --cron
