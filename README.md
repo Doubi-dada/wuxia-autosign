@@ -169,14 +169,52 @@ python src/wuxia_autosign/login.py
 4. 等一分钟左右，点进去看日志，出现下面这样就是成功：
 
 ```
-账号QQ=146*****25 大区=1002 角色=1154************2077
-配置: 奖励序号=4 执行时间=09:05
-今日周四 已许愿=False 待领奖=0
+[角色名] QQ=146*****25 大区=1002 角色=1154************2077
+奖励序号=4 今日周四 已许愿=False 待领奖=0
 许愿成功: 周享兑换券*3
 ```
 
-看到「许愿成功」就**全部搞定**了。删掉那两个 `.txt` 文件也不影响，GitHub 里已经存好了。
-日志里的「配置」一行就是它实际生效的奖励序号和时间，改了 Variables 可以在这里确认。
+看到「许愿成功」就**全部搞定**了。删掉那个 `.txt` 文件也不影响，GitHub 里已经存好了。
+日志里的「奖励序号」就是它实际生效的配置，改了 Variables 可以在这里确认。
+
+---
+
+## 进阶：登录态自动维护（推荐配置，之后基本不用再管）
+
+第 3 步登录拿到的凭证**会过期**（几天到几周不等），过期后 Actions 日志会出现 `iRet=101`。
+项目自带一套凭证自动续期工具，配好之后从两个渠道自动拿新凭证并更新到 GitHub：
+
+| 凭证来源 | 怎么才有货 |
+|---|---|
+| ① 游戏内嵌浏览器缓存（优先） | 玩游戏时**顺手打开一次活动页**即可，游戏会把整套登录态写进本地缓存 |
+| ② QQ 桌面客户端（QQNT）在线桥（兜底） | **QQ 客户端里登录着游戏对应的 QQ 号**就行，脚本直接现签一套全新凭证（含长期票根） |
+
+两个渠道都没有时才会退化成手动扫码（即重做第 3 步）。**多开 QQ 也支持**：脚本会扫描所有在线账号，自动只更新 roles.json 里有的角色。
+
+### 一次性配置（3 步）
+
+1. **建一个 GitHub 访问令牌**（用于自动改写 Secret）：
+   GitHub → 头像 → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token
+   - Repository access：只勾选 wuxia-autosign 这一个仓库
+   - Permissions → Actions secrets → **Read and write**
+   - 生成后把整行令牌（`github_pat_` 开头）用记事本存成文件 `src/wuxia_autosign/.gh_token`（一行即可；此文件已被 gitignore，不会被上传）
+2. **装加密依赖**（自动改 Secret 需要）：
+   ```powershell
+   uv pip install pynacl
+   ```
+   （没有 uv 的话 `pip install pynacl` 也行）
+3. **注册每小时自动维护任务**：
+   ```powershell
+   python src/wuxia_autosign/harvest.py --install-task
+   ```
+
+之后每小时自动执行：**游戏缓存 → QQNT 桥 SSO** 依次取凭证 → 只读验活 → 更新本地 roles.json → 自动改写 GitHub Secret。日志在 `src/wuxia_autosign/harvest.log`。
+
+> 不想建令牌的替代方案：装 GitHub CLI（`winget install --id GitHub.cli` 然后 `gh auth login`），效果相同；
+> 什么都不装也行，只是退化为每次手动把 `WUXIA_ROLES.txt` 粘到 Secret。
+>
+> 想确认 QQ 客户端桥上现在有哪些在线账号：`python src/wuxia_autosign/sso.py --show`。
+> 想随时体检登录态死活：`python src/wuxia_autosign/renew.py`。
 
 ---
 
@@ -184,7 +222,7 @@ python src/wuxia_autosign/login.py
 
 | 现象 | 怎么办 |
 |---|---|
-| 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了，在本机重做第 3 步，然后把新的 `WUXIA_ROLES.txt` 内容更新到 Secret `WUXIA_ROLES` |
+| 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了。已配置「进阶」自动维护的话，确认 QQ 客户端登着游戏号、等下一个整点或手动跑 `harvest.py --once --sync`；没配置的话重做第 3 步，再把新的 `WUXIA_ROLES.txt` 内容更新到 Secret `WUXIA_ROLES` |
 | 日志写着 `账号未绑定大区(iRet=99998)` | 这个号没在游戏活动页登录过。浏览器打开 <https://wuxia.qq.com/cp/a20230309_98549/index.html> 登录一次，然后再跑一次第 3 步 |
 | 日志出现 `base64` 相关报错 | 复制的内容不完整。用记事本全选复制，别漏、也别多加空格或换行 |
 | 黑窗口提示 `没有检测到 playwright-cli` | Node.js 没装好，重开窗口或重启电脑，重做第 2.3 步 |
@@ -197,7 +235,7 @@ python src/wuxia_autosign/login.py
 
 ## 安全须知（请务必看）
 
-1. `WUXIA_ROLES.txt`、`roles.json`、`state.json` 里都是你的**私人登录凭证**，拿到的人可以登录你的游戏账号。**不要发给任何人、不要传到群或网盘**。
+1. `WUXIA_ROLES.txt`、`roles.json`、`state.json` 里都是你的**私人登录凭证**，拿到的人可以登录你的游戏账号。**不要发给任何人、不要传到群或网盘**。`src/wuxia_autosign/.gh_token` 是 GitHub 令牌，泄露等于别人能改你的仓库，同样不要外传。
 2. 这些文件已经被项目屏蔽（`.gitignore`），git 永远不会自动上传它们，你也别手动绕过去提交。
 3. 运行日志里的 QQ 号、角色 ID 是打码显示的。
 4. 建议把仓库设为 **Private（私有）**；如果是 Fork 别人的仓库，自己建一个私有副本最省心。
@@ -213,6 +251,13 @@ python src/wuxia_autosign/login.py                # 登录(默认网页登录, �
 python src/wuxia_autosign/login.py --headed       # 跳过选择, 直接网页登录
 python src/wuxia_autosign/login.py --qr           # 扫码登录(仅限之前已登录成功过)
 python src/wuxia_autosign/login.py --timeout 600  # 放宽等待登录时间到 10 分钟
+
+# 凭据自动维护(见「进阶」一章)
+python src/wuxia_autosign/harvest.py --once          # 立即收割一次(游戏缓存->QQNT桥SSO)
+python src/wuxia_autosign/harvest.py --once --sync   # 收割并自动更新 GitHub Secret
+python src/wuxia_autosign/harvest.py --install-task  # 注册每小时自动维护的计划任务
+python src/wuxia_autosign/sso.py --show              # 看 QQ 客户端桥上有哪些在线账号
+python src/wuxia_autosign/renew.py                   # 会话体检(确认登录态还活着)
 ```
 
 ## 附：文件说明
@@ -221,9 +266,14 @@ python src/wuxia_autosign/login.py --timeout 600  # 放宽等待登录时间到 
 |---|---|
 | `src/wuxia_autosign/login.py` | 本地登录助手，生成凭证 `.txt`（多角色：跑一次加一个） |
 | `src/wuxia_autosign/autosign.py` | 签到主程序（GitHub 上自动运行） |
+| `src/wuxia_autosign/harvest.py` | 凭据自动维护：游戏缓存→QQNT桥SSO 收割 + 同步 GitHub |
+| `src/wuxia_autosign/sso.py` | QQ 客户端桥多账号凭据签发（纯本地 HTTP） |
+| `src/wuxia_autosign/renew.py` | 会话保活体检（确认登录态死活，死了报警） |
 | `.github/workflows/autosign.yml` | 定时任务配置（每小时触发一次） |
 | `WUXIA_ROLES.txt` | 第 4 步要复制的内容 |
 | `src/wuxia_autosign/roles.json` | 所有角色的登录态+配置，属于隐私文件 |
+| `src/wuxia_autosign/.gh_token` | GitHub 访问令牌（自动改 Secret 用），属于隐私文件 |
+| `src/wuxia_autosign/harvest.log` | 自动维护的运行日志 |
 | `qr_login_*.png` | 扫码登录时用的一次性二维码，可删 |
 
 ---
