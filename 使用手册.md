@@ -208,7 +208,7 @@ python src/wuxia_autosign/login.py
    python src/wuxia_autosign/harvest.py --install-task
    ```
 
-之后每小时自动执行：**游戏缓存 → QQNT 桥 SSO** 依次取凭证 → 只读验活 → 更新本地 roles.json → 自动改写 GitHub Secret。日志在 `src/wuxia_autosign/harvest.log`。
+之后每小时自动执行：**先体检现有凭据**（逐角色只读探测，全部有效就直接收工）→ 有失效才依次走 **游戏缓存 → QQNT 桥 SSO** 修复 → 自动改写 GitHub Secret。日志在 `src/wuxia_autosign/harvest.log`。
 
 > 不想建令牌的替代方案：装 GitHub CLI（`winget install --id GitHub.cli` 然后 `gh auth login`），效果相同；
 > 什么都不装也行，只是退化为每次手动把 `WUXIA_ROLES.txt` 粘到 Secret。

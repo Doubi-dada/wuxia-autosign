@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """游戏凭据收割服务: 自动获取长期凭据并同步到 GitHub
 
-凭据获取优先级:
+执行流程:
+    0. 体检现有凭据  roles.json 里每个角色的 cookie 用 FLOW_INIT 只读探测,
+       全部有效则直接收工(每小时计划任务多数时候走到这就结束)
     1. 游戏目录缓存  <游戏目录>/QBrowser/QCache/Cookies
        游戏内打开一次 wuxia 活动页, ptlogin2 静默签发整套登录态写入
        (uin/skey + .game.qq.com 的 p_skey/p_uin/pt4_token 长期正本)
     2. QQNT 桥 SSO   (sso.py, 纯 HTTP)
-       本机 QQ 客户端在线时, 通过 127.0.0.1:4301 桥签发当前登录账号的全套凭据
+       本机 QQ 客户端在线时, 通过 127.0.0.1:4301 桥签发在线账号的全套凭据
 
-每条通道取到凭据后都用 AMS FLOW_INIT 只读探测(不产生签到副作用), 活的才回写
+每条通道取到凭据后同样用 FLOW_INIT 只读探测(不产生签到副作用), 活的才回写
 roles.json 并(可选)同步 GitHub Secret WUXIA_ROLES。
 
 同步 GitHub 优先级: REST API(需 token) -> gh CLI -> 手工 txt
@@ -112,6 +114,25 @@ def _match(data, uin):
     return [r for r in data.get("roles", []) if r.get("uin") == uin]
 
 
+def check_roles(data):
+    """体检 roles.json 现有凭据, 返回 (失效角色列表)"""
+    dead = []
+    for r in data.get("roles", []):
+        name = r.get("name") or ("QQ%s" % r.get("uin", "?"))
+        jar = r.get("cookies", {})
+        if not jar.get("skey"):
+            log("[check] %s 没有 skey, 视为失效" % name)
+            dead.append(r)
+            continue
+        ok, info = probe(jar, r)
+        if ok:
+            log("[check] %s 有效(%s)" % (name, info))
+        else:
+            log("[check] %s 已失效(%s)" % (name, info))
+            dead.append(r)
+    return dead
+
+
 def try_jar(args, data):
     """通道1: 游戏目录缓存。返回 updated(已更新) / ok(有效无需动) / fail(转下一通道)"""
     try:
@@ -156,7 +177,7 @@ def try_sso(data):
 
 
 def harvest_once(args):
-    """按 游戏缓存 -> SSO 的优先级收割, 有更新时回写 roles.json 并(可选)同步"""
+    """体检 -> 游戏缓存 -> SSO; 有更新时回写 roles.json 并(可选)同步"""
     if not ROLES_FILE.exists():
         log("[!] 未找到 roles.json, 请先运行 python src/wuxia_autosign/login.py 登录一次")
         return False
@@ -165,6 +186,12 @@ def harvest_once(args):
     except Exception as e:
         log("[!] roles.json 无法解析(%s)" % e)
         return False
+
+    # 0. 先体检现有凭据, 全部有效就不折腾收割通道
+    dead = check_roles(data)
+    if data.get("roles") and not dead:
+        log("[check] %d 个角色凭据全部有效, 无需收割" % len(data["roles"]))
+        return True
 
     for step in (lambda: try_jar(args, data), lambda: try_sso(data)):
         status = step()
@@ -176,7 +203,8 @@ def harvest_once(args):
             return True
         if status == "ok":
             return True
-    log("两条通道都没能提供有效凭据")
+    still = ", ".join((r.get("name") or r.get("uin", "?")) for r in dead)
+    log("两条通道都没能修复失效角色: %s" % still)
     return False
 
 

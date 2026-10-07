@@ -167,6 +167,8 @@ skey 由 ptlogin2 服务端签发，**本地无法续签**，寿命跟随 QQ 会
 
 结论：skey 签发权在 ptlogin2，背书方有游戏进程（harvest）和 QQNT 客户端桥（sso）；`p_skey/pt4_token` 本身不能独立兑换新 skey，但可以通过客户端桥重新签发。`renew.py` 据此定位为"会话保活/体检"。
 
+补充（2026-10-07 实测）：`comm.ams.game.qq.com` 在 `.game.qq.com` 的 cookie 范围内，AMS 鉴权可用 **p_skey 兜底**——skey 已死而正本存活时 FLOW_INIT 依旧 iRet=0。即本地凭据集的有效期 = **skey 与 p_skey 任一存活**，这也是 `harvest.py --once` 体检所测的真实状态。
+
 ### 8.2 QQNT 客户端桥 SSO 链路（纯 HTTP，2026-10-07 实测打通）
 
 QQNT 在线时监听 `127.0.0.1:4301`（另见 4001/4310/5283/8082/9210）。关键坑：桥请求**必须携带 `.ptlogin2.qq.com` 域 cookie**（尤其 `pt_local_token`）且 Referer 合法，否则一律 400 空响应；chromium 因 PNA 无法从页面发起，需在脚本层直连（自签证书要关校验）。
