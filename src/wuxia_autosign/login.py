@@ -159,7 +159,7 @@ def fetch_gifts(area, roleid):
     try:
         if str(BASE) not in sys.path:
             sys.path.insert(0, str(BASE))
-        import autosign
+        import wuxia_autosign.autosign as autosign
         cookie, skey, _ = autosign.load_cookies()
         resp = autosign.emit(cookie, autosign.calc_gtk(skey), autosign.FLOW_INIT, area, roleid)
         return autosign.parse_init(resp)[2]

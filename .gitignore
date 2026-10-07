@@ -12,6 +12,11 @@ WUXIA_CONFIG.txt
 # 逆向产物与临时文件
 *.png
 *.txt
+_qb_*.db
+_qb_cookies.db
+_qb_standalone_cookies.db
+_watch_browser.ps1
+webbrowser_capture.log
 index0925.js
 gmi_act.desc.js
 snap_logged.yaml
