@@ -187,10 +187,12 @@ def harvest_once(args):
         log("[!] roles.json 无法解析(%s)" % e)
         return False
 
-    # 0. 先体检现有凭据, 全部有效就不折腾收割通道
+    # 0. 先体检现有凭据, 全部有效就不折腾收割通道(但 --sync 仍执行推送, 保证 GitHub 与本地一致)
     dead = check_roles(data)
     if data.get("roles") and not dead:
         log("[check] %d 个角色凭据全部有效, 无需收割" % len(data["roles"]))
+        if args.sync:
+            return sync_github()
         return True
 
     for step in (lambda: try_jar(args, data), lambda: try_sso(data)):
@@ -209,7 +211,10 @@ def harvest_once(args):
 
 
 def git_repo():
-    """从 origin 远程地址解析 owner/repo"""
+    """同步目标仓库: WUXIA_GH_REPO 环境变量(或 --repo 参数)优先, 否则取 git remote origin"""
+    v = os.environ.get("WUXIA_GH_REPO", "").strip()
+    if v:
+        return v
     try:
         r = subprocess.run(["git", "remote", "get-url", "origin"],
                            cwd=str(BASE_DIR.parent.parent),
@@ -374,9 +379,12 @@ def main():
     ap.add_argument("--sync", action="store_true", help="收割成功后同步 GitHub Secret")
     ap.add_argument("--interval", type=int, default=60, help="watch 模式检查间隔秒数(默认60)")
     ap.add_argument("--game-dir", default="", help="QBrowser/QCache 目录(默认自动定位)")
+    ap.add_argument("--repo", default="", help="GitHub 仓库(owner/name, 默认取 git remote origin)")
     ap.add_argument("--install-task", action="store_true", help="注册每小时运行的计划任务")
     ap.add_argument("--uninstall-task", action="store_true", help="删除计划任务")
     args = ap.parse_args()
+    if args.repo:
+        os.environ["WUXIA_GH_REPO"] = args.repo
 
     if args.install_task:
         sys.exit(0 if install_task() else 1)
