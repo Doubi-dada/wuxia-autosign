@@ -41,20 +41,17 @@ GitHub：保存凭证，每小时自动运行一次签到脚本
 ☑ Add python.exe to PATH
 ```
 
-### 2.2 安装 Node.js
-
-打开 <https://nodejs.org> 下载 **LTS 版**，一路下一步装完。
-
-### 2.3 安装浏览器工具
+### 2.2 安装浏览器工具
 
 打开「开始菜单 → 输入 `powershell` → 回车」，在窗口里粘贴下面两行（第二行要点几分钟，别关窗口）：
 
 ```powershell
-npm install -g @playwright/cli
-playwright-cli install
+pip install playwright
+python -m playwright install chromium
 ```
 
-> 如果提示 `npm 不是命令`，说明 Node.js 没装好，重启一次电脑再试。
+> 如果提示 `'pip' 不是命令`，说明 Python 没装好（第 2.1 步的勾没打），重装并勾选 `Add python.exe to PATH`。
+> 用 uv 管理环境的话，第一行换成 `uv pip install playwright`。
 
 ---
 
@@ -225,7 +222,7 @@ python src/wuxia_autosign/login.py
 | 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了。已配置「进阶」自动维护的话，确认 QQ 客户端登着游戏号、等下一个整点或手动跑 `harvest.py --once --sync`；没配置的话重做第 3 步，再把新的 `WUXIA_ROLES.txt` 内容更新到 Secret `WUXIA_ROLES` |
 | 日志写着 `账号未绑定大区(iRet=99998)` | 这个号没在游戏活动页登录过。浏览器打开 <https://wuxia.qq.com/cp/a20230309_98549/index.html> 登录一次，然后再跑一次第 3 步 |
 | 日志出现 `base64` 相关报错 | 复制的内容不完整。用记事本全选复制，别漏、也别多加空格或换行 |
-| 黑窗口提示 `没有检测到 playwright-cli` | Node.js 没装好，重开窗口或重启电脑，重做第 2.3 步 |
+| 黑窗口提示 `没有安装 Python 版 playwright` / `chromium 内核不可用` | 按提示执行 `uv pip install playwright` 和 `python -m playwright install chromium`，重做第 2.2 步 |
 | 一直显示 `等待登录中...` | 看看浏览器窗口是不是停在「请选择大区」，手动选一下；或者确认手机上点了「确认登录」 |
 | 日志写 `未到设定时间 09:05` | 正常，说明配置已生效、只是还没到点，脚本自己退出了 |
 | Actions 页面没有定时任务在跑 | 按第 5 步第 2 条点绿色按钮启用；长期无活动的仓库会被暂停，手动跑一次即可恢复 |

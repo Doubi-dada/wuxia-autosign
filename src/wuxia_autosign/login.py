@@ -8,15 +8,14 @@
 
 多角色: 换账号/角色后再跑一次本程序即可追加, roles.json 支持任意多个角色。
 
-依赖: playwright-cli
-    npm install -g @playwright/cli
+依赖(Python 版 playwright):
+    uv pip install playwright      (或 pip install playwright)
+    python -m playwright install chromium
 """
 import argparse
 import base64
 import json
 import re
-import shutil
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -35,28 +34,26 @@ import wuxia_autosign.autosign as autosign
 EXPR = "(function(){var f=document.querySelector('iframe');return f?f.src:'';})()"
 
 
-def cli(*args, timeout=90):
-    """调用 playwright-cli, 统一按 UTF-8 解码输出"""
-    try:
-        r = subprocess.run(["playwright-cli"] + list(args),
-                           capture_output=True, timeout=timeout, shell=True)
-    except subprocess.TimeoutExpired:
-        return ""
-
-    def dec(b):
-        return b.decode("utf-8", errors="replace") if b else ""
-
-    return dec(r.stdout) + dec(r.stderr)
-
-
 def ensure_playwright():
-    if shutil.which("playwright-cli") is None:
+    """确认 Python 版 playwright 和 chromium 内核可用, 缺了就给出安装指引"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
         sys.exit(
-            "\n[!] 没有检测到 playwright-cli\n"
-            "    请先安装 Node.js (https://nodejs.org)，然后执行:\n"
-            "        npm install -g @playwright/cli\n"
-            "        playwright-cli install\n"
+            "\n[!] 没有安装 Python 版 playwright\n"
+            "    请先执行:\n"
+            "        uv pip install playwright      (或 pip install playwright)\n"
+            "        python -m playwright install chromium\n"
             "    装好后重新运行 python login.py\n"
+        )
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            b.close()
+    except Exception as e:
+        sys.exit(
+            "\n[!] chromium 内核不可用(%s)\n"
+            "    请执行: python -m playwright install chromium\n" % e
         )
 
 
@@ -93,12 +90,16 @@ def choose_mode(args):
         print("    输入无效, 请重新输入")
 
 
-def read_role():
+def read_role(page):
     """从页面读取 area / roleid / playername, 未登录则返回空"""
-    out = cli("eval", EXPR, timeout=30).replace("\\u0026", "&")
+    try:
+        src = page.evaluate(EXPR) or ""
+    except Exception:
+        return "", "", ""
+    src = src.replace("\\u0026", "&")
 
     def pick(key):
-        m = re.search(key + r"=([^&\"'\\\s]+)", out)
+        m = re.search(key + r"=([^&\"'\\\s]+)", src)
         return urllib.parse.unquote(m.group(1)) if m else ""
 
     area, roleid, playername = pick("area"), pick("roleid"), pick("playername")
@@ -107,7 +108,7 @@ def read_role():
     return "", "", ""
 
 
-def wait_login(mode, timeout):
+def wait_login(page, mode, timeout):
     """轮询等待登录成功, 返回 (area, roleid, playername); 超时返回 (None, None, '')"""
     deadline = time.time() + timeout
     last_qr = 0
@@ -115,12 +116,15 @@ def wait_login(mode, timeout):
     while time.time() < deadline:
         if mode == "qr" and time.time() - last_qr > 45:
             qr = BASE / ("qr_login_%s.png" % time.strftime("%Y%m%d_%H%M%S"))
-            cli("screenshot", "--filename=" + str(qr))
-            last_qr = time.time()
-            print("\n>>> 请用手机 QQ 扫描这个二维码:\n    %s\n" % qr)
-            print("    (二维码约 2 分钟换一张, 请以最新提示的文件为准; 扫完记得在手机上点『确认登录』)")
+            try:
+                page.screenshot(path=str(qr))
+                last_qr = time.time()
+                print("\n>>> 请用手机 QQ 扫描这个二维码:\n    %s\n" % qr)
+                print("    (二维码约 2 分钟换一张, 请以最新提示的文件为准; 扫完记得在手机上点『确认登录』)")
+            except Exception:
+                pass
 
-        area, roleid, playername = read_role()
+        area, roleid, playername = read_role(page)
         if roleid:
             return area, roleid, playername
 
@@ -133,9 +137,9 @@ def wait_login(mode, timeout):
     return None, None, ""
 
 
-def save_state():
-    """保存 playwright 登录态到 state.json(中转), 校验后提取 cookie, 返回 (uin, jar)"""
-    cli("state-save", str(STATE_FILE))
+def save_state(ctx):
+    """导出浏览器登录态到 state.json(中转), 校验后提取 cookie, 返回 (uin, jar)"""
+    ctx.storage_state(path=str(STATE_FILE))
     if not STATE_FILE.exists():
         sys.exit("[!] 登录态保存失败, 没有生成 state.json, 请重新运行 python login.py")
     try:
@@ -144,7 +148,7 @@ def save_state():
         sys.exit("[!] state.json 损坏(%s), 请重新运行 python login.py" % e)
     jar = autosign.extract_cookies(state.get("cookies", []))
     if not jar.get("skey"):
-        sys.exit("[!] state.json 里没有 skey, 说明没有真正登录成功, 请重新运行 python login.py")
+        sys.exit("[!] 登录态里没有 skey, 说明没有真正登录成功, 请重新运行 python login.py")
     return jar.get("uin", "").lstrip("o"), jar
 
 
@@ -301,32 +305,39 @@ def main():
     mode = choose_mode(args)
 
     print("\n[1/3] 正在打开登录页面...")
-    cli("close")
-    if mode == "headed":
-        cli("open", "--headed", URL)
-        print("      浏览器窗口已弹出, 请在窗口里完成登录。")
-        print("      首次登录的话, 页面上可能让你选大区, 跟着选一下即可。")
-        print("      登录成功后不用做别的操作, 本程序会自动检测。")
-    else:
-        cli("open", URL)
-        print("      页面已在后台打开, 马上生成二维码给你扫。")
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=(mode != "headed"))
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        try:
+            page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            browser.close()
+            sys.exit("[!] 页面打开失败: %s" % e)
+        if mode == "headed":
+            print("      浏览器窗口已弹出, 请在窗口里完成登录。")
+            print("      首次登录的话, 页面上可能让你选大区, 跟着选一下即可。")
+            print("      登录成功后不用做别的操作, 本程序会自动检测。")
+        else:
+            print("      页面已在后台打开, 马上生成二维码给你扫。")
 
-    time.sleep(4)
-    area, roleid, playername = wait_login(mode, args.timeout)
-    if not roleid:
-        cli("close")
-        sys.exit("\n[!] 等待超时, 没有检测到登录。\n"
-                 "    建议改用默认方式重来: python login.py  (选 1 网页登录)\n"
-                 "    如果是扫码方式, 记得扫完要在手机上点『确认登录』。")
+        area, roleid, playername = wait_login(page, mode, args.timeout)
+        if not roleid:
+            browser.close()
+            sys.exit("\n[!] 等待超时, 没有检测到登录。\n"
+                     "    建议改用默认方式重来: python login.py  (选 1 网页登录)\n"
+                     "    如果是扫码方式, 记得扫完要在手机上点『确认登录』。")
 
-    print("\n[2/3] 登录成功, 正在保存登录态...")
-    uin, jar = save_state()
+        print("\n[2/3] 登录成功, 正在保存登录态...")
+        uin, jar = save_state(ctx)
+        browser.close()
+
     data = upsert_role(area, roleid, playername, jar, uin)
     gifts = fetch_gifts(jar, area, roleid)
 
     print("\n[3/3] 正在生成 GitHub 需要的内容...")
     files = emit_secret_files()
-    cli("close")
     print_result(files, data, uin, area, gifts)
 
 
