@@ -1,33 +1,30 @@
 # -*- coding: utf-8 -*-
-"""游戏凭据收割服务: 自动获取游戏登录产生的长期凭据, 并同步到 GitHub
+"""游戏凭据收割服务: 自动获取长期凭据并同步到 GitHub
 
-原理(逆向+实测验证): 游戏内嵌浏览器 QBrowser 的 cookie 库
-    <游戏目录>/QBrowser/QCache/Cookies
-保存着整套 QQ 登录态(uin/skey + game.qq.com 域的 p_skey/p_uin/pt4_token 长期正本)。
+凭据获取优先级:
+    1. 游戏目录缓存  <游戏目录>/QBrowser/QCache/Cookies
+       游戏内打开一次 wuxia 活动页, ptlogin2 静默签发整套登录态写入
+       (uin/skey + .game.qq.com 的 p_skey/p_uin/pt4_token 长期正本)
+    2. QQNT 桥 SSO   (sso.py, 纯 HTTP)
+       本机 QQ 客户端在线时, 通过 127.0.0.1:4301 桥签发当前登录账号的全套凭据
 
-凭据刷新模型(2026-10-07 进程/cookie 库全程实测):
-    - 游戏登录本身不写凭据; 登录时预热的 QBrowser(默认 baidu 主页)反而会重建
-      profile, 清空上次的凭据
-    - 只有在游戏里【打开 wuxia 活动页】的那一刻, ptlogin2 静默签发整套登录态写入
-    - QQ 会话存活期间, 重开活动页会续回同一个 skey; 会话死透后才签发新值
-    => 想让本服务收到新凭据, 玩游戏时记得顺手打开一次活动中心/周周载愿页
+每条通道取到凭据后都用 AMS FLOW_INIT 只读探测(不产生签到副作用), 活的才回写
+roles.json 并(可选)同步 GitHub Secret WUXIA_ROLES。
 
-本服务监控该文件, 发现新凭据后:
-    1. 复制读取(游戏运行中也不冲突), 白名单提取 cookie
-    2. 用 AMS FLOW_INIT 只读探测凭据是否有效(不改任何签到状态)
-    3. 按 uin 匹配 roles.json 里的角色, 回写新凭据(从不删除, 库被清空时跳过)
-    4. --sync 时把 roles.json base64 后写入 GitHub Secret WUXIA_ROLES (gh CLI)
+同步 GitHub 优先级: REST API(需 token) -> gh CLI -> 手工 txt
+token 配置(三选一):
+    a) 环境变量 WUXIA_GH_TOKEN 或 GH_TOKEN
+    b) 文件 src/wuxia_autosign/.gh_token (一行, 已被 .gitignore)
+    c) 安装并登录 gh CLI (winget install --id GitHub.cli && gh auth login)
+token 需要 classic PAT 的 repo 权限, 或 fine-grained PAT 的 Actions secrets 写权限。
+依赖 PyNaCl(加密 Secret 用): uv pip install pynacl
 
 用法:
-    python harvest.py --once            # 立即检查+收割一次(只更新本地 roles.json)
-    python harvest.py --once --sync     # 收割并同步到 GitHub
+    python harvest.py --once            # 收割一次(只更新本地 roles.json)
+    python harvest.py --once --sync     # 收割并同步 GitHub
     python harvest.py --watch           # 常驻监控, 每 60 秒检查一次(配 --sync)
     python harvest.py --install-task    # 注册 Windows 计划任务(每小时 --once --sync)
     python harvest.py --uninstall-task  # 删除计划任务
-
-首次同步前需装好 GitHub CLI 并登录一次:
-    winget install --id GitHub.cli
-    gh auth login
 """
 import argparse
 import base64
@@ -40,6 +37,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 
@@ -47,6 +46,7 @@ BASE_DIR = Path(__file__).parent
 ROLES_FILE = BASE_DIR / "roles.json"
 LOG_FILE = BASE_DIR / "harvest.log"
 TASK_WRAPPER = BASE_DIR / "harvest_task.cmd"
+TOKEN_FILE = BASE_DIR / ".gh_token"
 TASK_NAME = "WuxiaAutosignHarvest"
 DEFAULT_CACHE = Path(r"E:\WeGameApps\天涯明月刀\QBrowser\QCache")
 SECRET_NAME = "WUXIA_ROLES"
@@ -108,8 +108,69 @@ def probe(jar, role):
     return iret in ("0", "99998"), "iRet=%s" % iret
 
 
+def _match(data, uin):
+    return [r for r in data.get("roles", []) if r.get("uin") == uin]
+
+
+def try_jar(args, data):
+    """通道1: 游戏目录缓存。返回 updated(已更新) / ok(有效无需动) / fail(转下一通道)"""
+    try:
+        uin, jar = read_jar(cache_dir(args))
+    except RuntimeError as e:
+        log("[jar] %s, 转 SSO" % e)
+        return "fail"
+    if not uin or not jar.get("skey"):
+        log("[jar] 游戏 cookie 库里没有登录态(游戏重启后需开一次活动页), 转 SSO")
+        return "fail"
+    matched = _match(data, uin)
+    if not matched:
+        log("[jar] 游戏 cookie 库的 QQ(%s) 不在 roles.json, 转 SSO" % autosign.mask(uin))
+        return "fail"
+    changed = any(r.get("cookies", {}).get("skey") != jar.get("skey") for r in matched)
+    ok, info = probe(jar, matched[0])
+    if not ok:
+        log("[jar] 游戏缓存凭据已失效(%s), 转 SSO" % info)
+        return "fail"
+    if not changed:
+        log("[jar] 凭据无变化且有效(%s)" % info)
+        return "ok"
+    for r in matched:
+        r["cookies"] = dict(jar)
+    log("[jar] 已更新 %d 个角色的凭据(%s)" % (len(matched), info))
+    return "updated"
+
+
+def try_sso(data):
+    """通道2: QQNT 桥 SSO(见 sso.py)。返回 updated / ok / fail"""
+    from wuxia_autosign.sso import SsoClient   # 延迟导入
+    try:
+        uin, nick, jar = SsoClient().mint()
+    except RuntimeError as e:
+        log("[sso] %s" % e)
+        return "fail"
+    log("[sso] 签发成功: QQ=%s(%s) 含正本=%s"
+        % (autosign.mask(uin), nick, "是" if jar.get("pt4_token") else "否"))
+    matched = _match(data, uin)
+    if not matched:
+        log("[sso] QQNT 当前登录的 QQ%s 不在 roles.json, 放弃"
+            "(想给该号签到先用它跑一次 login.py; 或在 QQNT 里登录游戏账号)" % autosign.mask(uin))
+        return "fail"
+    ok, info = probe(jar, matched[0])
+    if not ok:
+        log("[sso] 新签凭据探测失败(%s)" % info)
+        return "fail"
+    changed = any(r.get("cookies", {}).get("skey") != jar.get("skey") for r in matched)
+    if not changed:
+        log("[sso] 凭据与当前一致(%s)" % info)
+        return "ok"
+    for r in matched:
+        r["cookies"] = dict(jar)
+    log("[sso] 已更新 %d 个角色的凭据(%s)" % (len(matched), info))
+    return "updated"
+
+
 def harvest_once(args):
-    """收割一次: 游戏jar -> 校验 -> 回写 roles.json -> (可选)同步 GitHub"""
+    """按 游戏缓存 -> SSO 的优先级收割, 有更新时回写 roles.json 并(可选)同步"""
     if not ROLES_FILE.exists():
         log("[!] 未找到 roles.json, 请先运行 python src/wuxia_autosign/login.py 登录一次")
         return False
@@ -118,38 +179,19 @@ def harvest_once(args):
     except Exception as e:
         log("[!] roles.json 无法解析(%s)" % e)
         return False
-    try:
-        uin, jar = read_jar(cache_dir(args))
-    except RuntimeError as e:
-        log("[!] %s" % e)
-        return False
-    if not uin or not jar.get("skey"):
-        log("[!] 游戏 cookie 库里没有登录态(游戏里还没登录/打开过活动页), 本次跳过")
-        return False
 
-    matched = [r for r in data.get("roles", []) if r.get("uin") == uin]
-    if not matched:
-        log("[!] 游戏 cookie 库里的 QQ(%s) 不在 roles.json, "
-            "请用该账号跑一次 login.py 添加角色" % autosign.mask(uin))
-        return False
-
-    if all(r.get("cookies", {}).get("skey") == jar.get("skey") for r in matched):
-        log("游戏凭据无变化(QQ=%s), 跳过" % autosign.mask(uin))
-        return True
-
-    ok, info = probe(jar, matched[0])
-    if not ok:
-        log("[!] 游戏 cookie 库里的凭据已失效(%s), 不同步; 等下次游戏会话刷新后再试" % info)
-        return False
-
-    for r in matched:
-        r["cookies"] = dict(jar)
-    ROLES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-    log("已更新 %d 个角色的凭据(QQ=%s, %s)" % (len(matched), autosign.mask(uin), info))
-    if args.sync:
-        return sync_github()
-    log("提示: 加 --sync 可同时推送到 GitHub Secret %s" % SECRET_NAME)
-    return True
+    for step in (lambda: try_jar(args, data), lambda: try_sso(data)):
+        status = step()
+        if status == "updated":
+            ROLES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+            if args.sync:
+                return sync_github()
+            log("提示: 加 --sync 可同时推送到 GitHub Secret %s" % SECRET_NAME)
+            return True
+        if status == "ok":
+            return True
+    log("两条通道都没能提供有效凭据")
+    return False
 
 
 def git_repo():
@@ -165,31 +207,99 @@ def git_repo():
     return m.group(1) if m else ""
 
 
-def sync_github():
-    if shutil.which("gh") is None:
-        b64 = base64.b64encode(ROLES_FILE.read_bytes()).decode()
-        out = BASE_DIR / (SECRET_NAME + ".txt")
-        out.write_text(b64, "utf-8")
-        log("[!] 没有检测到 gh 命令(GitHub CLI), 无法自动同步。两选一:")
-        log("    a) 安装并登录后重试: winget install --id GitHub.cli  然后 gh auth login")
-        log("    b) 手动: 打开 %s 全选复制, 更新 GitHub Secret %s" % (out, SECRET_NAME))
-        return False
+def gh_token():
+    """token 优先级: 环境变量 -> .gh_token 文件 -> gh auth token"""
+    for k in ("WUXIA_GH_TOKEN", "GH_TOKEN"):
+        v = os.environ.get(k, "").strip()
+        if v:
+            return v
+    if TOKEN_FILE.exists():
+        v = TOKEN_FILE.read_text(encoding="utf-8").strip()
+        if v:
+            return v
+    if shutil.which("gh"):
+        try:
+            r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=15)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except Exception:
+            pass
+    return ""
+
+
+def sync_github_api(token):
+    """REST API + SealedBox 加密更新 Secret; True成功 / None未配好或失败(走兜底)"""
     repo = git_repo()
-    body = base64.b64encode(ROLES_FILE.read_bytes()).decode()
-    cmd = ["gh", "secret", "set", SECRET_NAME, "--body", body]
-    if repo:
-        cmd += ["--repo", repo]
+    if not repo:
+        log("[!] 解析不到 origin 仓库地址, 无法走 API")
+        return None
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        import nacl.encoding
+        import nacl.public
+    except ImportError:
+        log("[!] 缺少 PyNaCl(加密 Secret 需要): uv pip install pynacl")
+        return None
+    api = "https://api.github.com/repos/%s/actions/secrets" % repo
+    hdr = {"Authorization": "Bearer %s" % token,
+           "Accept": "application/vnd.github+json",
+           "User-Agent": "wuxia-autosign"}
+
+    def call(url, data=None, method="GET"):
+        req = urllib.request.Request(
+            url, method=method, data=json.dumps(data).encode() if data else None)
+        for k, v in hdr.items():
+            req.add_header(k, v)
+        if data:
+            req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read().decode() or "{}")
+
+    try:
+        _, pk = call(api + "/public-key")
+        box = nacl.public.SealedBox(nacl.public.PublicKey(pk["key"], nacl.encoding.Base64Encoder()))
+        plain = base64.b64encode(ROLES_FILE.read_bytes()).decode("utf-8")
+        enc = base64.b64encode(box.encrypt(plain.encode("utf-8"))).decode("utf-8")
+        call(api + "/" + SECRET_NAME, {"encrypted_value": enc, "key_id": pk["key_id"]}, "PUT")
+        log("已通过 GitHub API 更新 Secret %s (%s)" % (SECRET_NAME, repo))
+        return True
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read(150).decode("utf-8", "replace")
+        except Exception:
+            pass
+        log("[!] GitHub API 拒绝: HTTP %s %s (token 权限对吗?)" % (e.code, detail))
     except Exception as e:
-        log("[!] gh 执行失败: %s" % e)
-        return False
-    if r.returncode != 0:
-        log("[!] gh secret set 失败: %s %s" % (r.stdout.strip(), r.stderr.strip()))
-        log("    先运行 gh auth login 登录 GitHub 账号, 再重试")
-        return False
-    log("已同步 Secret %s -> GitHub%s" % (SECRET_NAME, (" (%s)" % repo) if repo else ""))
-    return True
+        log("[!] GitHub API 异常: %s" % e)
+    return None
+
+
+def sync_github():
+    """更新 Secret: API -> gh CLI -> 手工 txt, 三级兜底"""
+    token = gh_token()
+    if token and sync_github_api(token) is True:
+        return True
+    if shutil.which("gh"):
+        repo = git_repo()
+        body = base64.b64encode(ROLES_FILE.read_bytes()).decode()
+        cmd = ["gh", "secret", "set", SECRET_NAME, "--body", body]
+        if repo:
+            cmd += ["--repo", repo]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except Exception as e:
+            log("[!] gh 执行失败: %s" % e)
+            r = None
+        if r and r.returncode == 0:
+            log("已通过 gh CLI 更新 Secret %s%s" % (SECRET_NAME, (" (%s)" % repo) if repo else ""))
+            return True
+        if r:
+            log("[!] gh secret set 失败: %s %s" % (r.stdout.strip(), r.stderr.strip()))
+    out = BASE_DIR / (SECRET_NAME + ".txt")
+    out.write_text(base64.b64encode(ROLES_FILE.read_bytes()).decode(), "utf-8")
+    log("[!] 自动同步都不可用。手动: 打开 %s 全选复制, 更新 GitHub Secret %s" % (out, SECRET_NAME))
+    log("    想自动同步: 建一个 PAT 放进环境变量 WUXIA_GH_TOKEN 或文件 %s" % TOKEN_FILE)
+    return False
 
 
 def jar_sig(cdir):
@@ -244,7 +354,7 @@ def uninstall_task():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="游戏凭据收割 + GitHub 同步服务")
+    ap = argparse.ArgumentParser(description="凭据收割服务: 游戏缓存/QQNT桥SSO -> GitHub")
     ap.add_argument("--once", action="store_true", help="立即检查+收割一次")
     ap.add_argument("--watch", action="store_true", help="常驻监控模式")
     ap.add_argument("--sync", action="store_true", help="收割成功后同步 GitHub Secret")

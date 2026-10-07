@@ -22,6 +22,7 @@ _watch_jar.py
 _jar_watch.log
 harvest.log
 harvest_task.cmd
+.gh_token
 index0925.js
 gmi_act.desc.js
 snap_logged.yaml
