@@ -154,3 +154,14 @@ skey 由 ptlogin2 服务端签发，**本地无法续签**，寿命跟随 QQ 会
 - 反作弊会屏蔽外部进程读取 QBrowser 命令行（PEB），但 cookie 库可直接复制读取
 - QQ 会话存活期间重开活动页，ptlogin2 续回**同一个 skey**；会话死透后才签发新值
 - 自动化意义：监控该库即可零扫码收割新鲜凭据（见 `src/wuxia_autosign/harvest.py`），前提是玩游戏时顺手开一次活动页
+
+### 8.1 SSO 续签通道实测矩阵（2026-10-07，chromium headless + NTQQ）
+
+| 通道 | 结果 |
+|---|---|
+| 游戏内活动页（QBrowser + 游戏 IPC 背书） | ✅ 唯一可用，`harvest.py` 已产品化 |
+| 长期正本自换（p_skey/pt4_token/ptcz + headless 开活动页） | ❌ `proxy.html` 只搬运正本不签发；无 skey 时页面退回扫码登录 |
+| QQ 客户端桥（`localhost.ptlogin2.qq.com:4301`） | ❌ NTQQ 要求 `localhost.sec.qq.com:9410` 安全握手 + `pt_local_tk` 校验，400 拒绝；页面自身在 chromium 里也走不通（`ERR_NAME_NOT_RESOLVED`/cert/握手多重障碍） |
+| 带活 skey 的保活访问 | ✅ 会话黏性：跨游戏重启/跨浏览器重开活动页均续同一 skey，直到服务端会话死透 |
+
+结论：skey 签发权在 ptlogin2，背书方只有游戏进程；`p_skey/pt4_token` 是被搬运的长期登录态而非可独立兑现的续签凭证。`renew.py` 据此定位为"会话保活/体检"而非续签器。
