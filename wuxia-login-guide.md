@@ -136,3 +136,21 @@ skey 由 ptlogin2 服务端签发，**本地无法续签**，寿命跟随 QQ 会
 | 登录强校验 | `https://ams.game.qq.com/ams/userLoginSvr` |
 | 角色选择器 | `https://gameact.qq.com/comm-htdocs/js/game_area/wuxia_server_select.js`（`_SQ`/`_WX`） |
 | 微信 token 刷新 | `https://c.y.qq.com/base/fcgi-bin/login_get_musickey.fcg` |
+
+---
+
+## 8. 附: 游戏内嵌浏览器(QBrowser)凭据模型（2026-10-07 实测）
+
+游戏用 `WuXia_Client_dx12.exe → QBrowser.exe → QBrowserProcess.exe`(CEF) 打开活动页，cookie 库在 `<游戏目录>/QBrowser/QCache/Cookies`(Chromium SQLite，值明文)。
+
+| 时点 | cookie 库变化 |
+|---|---|
+| 游戏退出 | 不变，凭据保留 |
+| 客户端启动/登录角色 | 登录链路**不写**凭据；登录时预热的 QBrowser（默认 baidu 主页）会重建 profile，**清空上次凭据** |
+| **在游戏里打开 wuxia 活动页** | **ptlogin2 静默签发整套登录态写入**：`.qq.com` 的 uin/skey/RK/ptcz + `.game.qq.com` 的 p_skey/p_uin/pt4_token（长期正本）。这就是"游戏内免登录"的全部真相 |
+
+补充实测结论：
+- 打开活动页的 URL（从缓存还原）：`index.html?game_id=609020401&idc=20&svrID=1&roleid=...&playername=...&tabid=1|1`——只带角色定位参数（§4 的 svrID 拼接规则在此验证），鉴权全靠 cookie
+- 反作弊会屏蔽外部进程读取 QBrowser 命令行（PEB），但 cookie 库可直接复制读取
+- QQ 会话存活期间重开活动页，ptlogin2 续回**同一个 skey**；会话死透后才签发新值
+- 自动化意义：监控该库即可零扫码收割新鲜凭据（见 `src/wuxia_autosign/harvest.py`），前提是玩游戏时顺手开一次活动页

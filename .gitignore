@@ -18,6 +18,10 @@ _qb_cookies.db
 _qb_standalone_cookies.db
 _watch_browser.ps1
 webbrowser_capture.log
+_watch_jar.py
+_jar_watch.log
+harvest.log
+harvest_task.cmd
 index0925.js
 gmi_act.desc.js
 snap_logged.yaml
