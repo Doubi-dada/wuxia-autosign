@@ -1,6 +1,7 @@
 # 敏感: 登录态与角色配置(通过 GitHub Secrets 注入)
 state.json
 config.json
+roles.json
 
 # playwright-cli 运行日志
 .playwright-cli/

@@ -69,7 +69,7 @@ playwright-cli install
 ### 3.2 一条命令开始登录
 
 ```powershell
-python login.py
+python src/wuxia_autosign/login.py
 ```
 
 它会问你用哪种方式：
@@ -88,16 +88,15 @@ python login.py
 随即会弹出一个浏览器窗口，你在里面扫码 / 点头像登录就行。
 首次登录页面可能会让你**选大区**，跟着点一下，然后等着，脚本每 5 秒自动检测一次，检测到就继续。
 
-> 也可以跳过选择：`python login.py --headed` 直接网页登录。
+> 也可以跳过选择：`python src/wuxia_autosign/login.py --headed` 直接网页登录。
 
 ### 3.3 看到这个就成功了
 
 ```
 账号 QQ: 146*****25   大区: 1002   角色: 1154************2077
 
-已生成两个文件, 用记事本打开后 Ctrl+A / Ctrl+C 全选复制即可:
-    WUXIA_STATE    -> D:\wuxia-autosign\WUXIA_STATE.txt
-    WUXIA_CONFIG   -> D:\wuxia-autosign\WUXIA_CONFIG.txt
+已生成 Secret 文件, 用记事本打开后 Ctrl+A / Ctrl+C 全选复制即可:
+    WUXIA_ROLES    -> D:\wuxia-autosign\src\wuxia_autosign\WUXIA_ROLES.txt
 ```
 
 窗口下面会自动打印**照着做的 3 步**：到 GitHub 上填什么、填哪里都写好了，
@@ -108,16 +107,20 @@ python login.py
 
 ## 第 4 步：照着窗口里的 3 步填 GitHub
 
-### 第 1 步（必做）：填两个 Secrets
+### 第 1 步（必做）：填一个 Secret
 
-**Settings → Secrets and variables → Actions → New repository secret**，填两次：
+**Settings → Secrets and variables → Actions → New repository secret**：
 
-| 第几次 | Name 框里填 | Secret 框里粘贴的内容 |
-|---|---|---|
-| 第 1 次 | `WUXIA_STATE` | `WUXIA_STATE.txt` 里的整行内容 |
-| 第 2 次 | `WUXIA_CONFIG` | `WUXIA_CONFIG.txt` 里的整行内容 |
+| Name 框里填 | Secret 框里粘贴的内容 |
+|---|---|
+| `WUXIA_ROLES` | `WUXIA_ROLES.txt` 里的整行内容 |
 
-填完页面应该能看到 `WUXIA_STATE`、`WUXIA_CONFIG` 两个名字。
+填完页面应该能看到 `WUXIA_ROLES` 这一个名字。
+（从旧版升级过来的：`WUXIA_STATE` / `WUXIA_CONFIG` 两个旧 Secret 可以删掉，留着也兼容。）
+
+> **想签多个角色/多个账号**：换账号（或换角色）再跑一次
+> `python src/wuxia_autosign/login.py`，把新的 `WUXIA_ROLES` 内容重新粘一次 Secret 即可，
+> 所有角色每天会一起自动签到。
 
 ### 第 2 步（想换奖励才做）：选每天许愿的奖励
 
@@ -154,7 +157,7 @@ python login.py
 填了以后签到成功/失败会推到微信；不填就不推送。
 **SendKey 属于敏感信息，建议填在 Secrets 标签页而不是 Variables**（两个位置都能识别，优先读 Secrets）。
 
-> 这三项改完**下一次自动运行就生效**，不用重新登录、不用重跑 `python login.py`。
+> 这三项改完**下一次自动运行就生效**，不用重新登录、不用重跑 `python src/wuxia_autosign/login.py`。
 
 ---
 
@@ -181,7 +184,7 @@ python login.py
 
 | 现象 | 怎么办 |
 |---|---|
-| 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了，在本机重做第 3 步，然后把新的 `WUXIA_STATE.txt` 内容更新到 Secret `WUXIA_STATE` |
+| 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了，在本机重做第 3 步，然后把新的 `WUXIA_ROLES.txt` 内容更新到 Secret `WUXIA_ROLES` |
 | 日志写着 `账号未绑定大区(iRet=99998)` | 这个号没在游戏活动页登录过。浏览器打开 <https://wuxia.qq.com/cp/a20230309_98549/index.html> 登录一次，然后再跑一次第 3 步 |
 | 日志出现 `base64` 相关报错 | 复制的内容不完整。用记事本全选复制，别漏、也别多加空格或换行 |
 | 黑窗口提示 `没有检测到 playwright-cli` | Node.js 没装好，重开窗口或重启电脑，重做第 2.3 步 |
@@ -194,34 +197,33 @@ python login.py
 
 ## 安全须知（请务必看）
 
-1. `WUXIA_STATE.txt`、`WUXIA_CONFIG.txt`、`state.json`、`config.json` 里都是你的**私人登录凭证**，拿到的人可以登录你的游戏账号。**不要发给任何人、不要传到群或网盘**。
-2. 这四个文件已经被项目屏蔽（`.gitignore`），git 永远不会自动上传它们，你也别手动绕过去提交。
+1. `WUXIA_ROLES.txt`、`roles.json`、`state.json` 里都是你的**私人登录凭证**，拿到的人可以登录你的游戏账号。**不要发给任何人、不要传到群或网盘**。
+2. 这些文件已经被项目屏蔽（`.gitignore`），git 永远不会自动上传它们，你也别手动绕过去提交。
 3. 运行日志里的 QQ 号、角色 ID 是打码显示的。
 4. 建议把仓库设为 **Private（私有）**；如果是 Fork 别人的仓库，自己建一个私有副本最省心。
 5. 仓库公开时：**不要在描述、README、Issue 里写自己的 QQ 号**；贴日志前先看一眼有没有账号信息。
-6. 提 Issue 求助时，只贴报错那几行即可，不要贴 `WUXIA_STATE.txt` / `config.json` 的内容。
+6. 提 Issue 求助时，只贴报错那几行即可，不要贴 `WUXIA_ROLES.txt` / `roles.json` 的内容。
 
 ---
 
 ## 附：命令一览
 
 ```powershell
-python login.py                # 登录(默认网页登录, 推荐)
-python login.py --headed       # 跳过选择, 直接网页登录
-python login.py --qr           # 扫码登录(仅限之前已登录成功过)
-python login.py --timeout 600  # 放宽等待登录时间到 10 分钟
+python src/wuxia_autosign/login.py                # 登录(默认网页登录, 推荐)
+python src/wuxia_autosign/login.py --headed       # 跳过选择, 直接网页登录
+python src/wuxia_autosign/login.py --qr           # 扫码登录(仅限之前已登录成功过)
+python src/wuxia_autosign/login.py --timeout 600  # 放宽等待登录时间到 10 分钟
 ```
 
 ## 附：文件说明
 
 | 文件 | 作用 |
 |---|---|
-| `login.py` | 本地登录助手，生成凭证和两个 `.txt` |
-| `autosign.py` | 签到主程序（GitHub 上自动运行） |
+| `src/wuxia_autosign/login.py` | 本地登录助手，生成凭证 `.txt`（多角色：跑一次加一个） |
+| `src/wuxia_autosign/autosign.py` | 签到主程序（GitHub 上自动运行） |
 | `.github/workflows/autosign.yml` | 定时任务配置（每小时触发一次） |
-| `WUXIA_STATE.txt` | 第 4 步要复制的第 1 段内容 |
-| `WUXIA_CONFIG.txt` | 第 4 步要复制的第 2 段内容 |
-| `state.json` / `config.json` | 上面两个 `.txt` 的原始文件，属于隐私文件 |
+| `WUXIA_ROLES.txt` | 第 4 步要复制的内容 |
+| `src/wuxia_autosign/roles.json` | 所有角色的登录态+配置，属于隐私文件 |
 | `qr_login_*.png` | 扫码登录时用的一次性二维码，可删 |
 
 ---

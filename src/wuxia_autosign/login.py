@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""本地登录助手: 生成 GitHub Secrets 需要的两段内容
+"""本地登录助手: 登录后把角色写入 roles.json, 生成 GitHub Secret 需要的内容
 
 用法:
     python login.py           # 交互式选择登录方式(默认是网页登录, 推荐)
     python login.py --headed  # 网页登录(默认, 首次登录必须用这个)
     python login.py --qr      # 扫码登录(仅限之前已经成功登录过的情况)
+
+多角色: 换账号/角色后再跑一次本程序即可追加, roles.json 支持任意多个角色。
 
 依赖: playwright-cli
     npm install -g @playwright/cli
@@ -17,15 +19,19 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 BASE = Path(__file__).parent
 URL = "https://wuxia.qq.com/cp/a20230309_98549/index.html"
-STATE_FILE = BASE / "state.json"
-CFG_FILE = BASE / "config.json"
-SECRET_FILES = (("WUXIA_STATE", STATE_FILE), ("WUXIA_CONFIG", CFG_FILE))
+STATE_FILE = BASE / "state.json"      # playwright 中转文件, 用完即止
+ROLES_FILE = BASE / "roles.json"      # 多角色配置(最终产物)
+SECRET_FILES = (("WUXIA_ROLES", ROLES_FILE),)
 
-# 登录成功后, 活动 iframe 的地址里会带上 area / roleid
+sys.path.insert(0, str(BASE.parent))
+import wuxia_autosign.autosign as autosign
+
+# 登录成功后, 活动 iframe 的地址里会带上 area / roleid / playername
 EXPR = "(function(){var f=document.querySelector('iframe');return f?f.src:'';})()"
 
 
@@ -88,17 +94,21 @@ def choose_mode(args):
 
 
 def read_role():
-    """从页面读取 area / roleid, 未登录则返回空"""
+    """从页面读取 area / roleid / playername, 未登录则返回空"""
     out = cli("eval", EXPR, timeout=30).replace("\\u0026", "&")
-    m_area = re.search(r"area=([^&\"'\\\s]+)", out)
-    m_role = re.search(r"roleid=([^&\"'\\\s]+)", out)
-    if m_area and m_role:
-        return m_area.group(1), m_role.group(1)
-    return "", ""
+
+    def pick(key):
+        m = re.search(key + r"=([^&\"'\\\s]+)", out)
+        return urllib.parse.unquote(m.group(1)) if m else ""
+
+    area, roleid, playername = pick("area"), pick("roleid"), pick("playername")
+    if area and roleid:
+        return area, roleid, playername
+    return "", "", ""
 
 
 def wait_login(mode, timeout):
-    """轮询等待登录成功, 返回 (area, roleid); 超时返回 (None, None)"""
+    """轮询等待登录成功, 返回 (area, roleid, playername); 超时返回 (None, None, '')"""
     deadline = time.time() + timeout
     last_qr = 0
     waited = 0
@@ -110,9 +120,9 @@ def wait_login(mode, timeout):
             print("\n>>> 请用手机 QQ 扫描这个二维码:\n    %s\n" % qr)
             print("    (二维码约 2 分钟换一张, 请以最新提示的文件为准; 扫完记得在手机上点『确认登录』)")
 
-        area, roleid = read_role()
+        area, roleid, playername = read_role()
         if roleid:
-            return area, roleid
+            return area, roleid, playername
 
         time.sleep(5)
         waited += 5
@@ -120,48 +130,61 @@ def wait_login(mode, timeout):
             print("    等待登录中... 已等待 %d 秒" % waited)
             if mode == "headed":
                 print("    (如果页面停在让选大区/选角色, 请在窗口里手动选一下, 选完页面会自己刷新)")
-    return None, None
+    return None, None, ""
 
 
 def save_state():
-    """保存登录态并校验, 返回 uin"""
+    """保存 playwright 登录态到 state.json(中转), 校验后提取 cookie, 返回 (uin, jar)"""
     cli("state-save", str(STATE_FILE))
     if not STATE_FILE.exists():
         sys.exit("[!] 登录态保存失败, 没有生成 state.json, 请重新运行 python login.py")
     try:
-        ck = {c["name"]: c["value"] for c in json.loads(STATE_FILE.read_text("utf-8")).get("cookies", [])}
+        state = json.loads(STATE_FILE.read_text("utf-8"))
     except Exception as e:
         sys.exit("[!] state.json 损坏(%s), 请重新运行 python login.py" % e)
-    if not ck.get("skey"):
+    jar = autosign.extract_cookies(state.get("cookies", []))
+    if not jar.get("skey"):
         sys.exit("[!] state.json 里没有 skey, 说明没有真正登录成功, 请重新运行 python login.py")
-    return ck.get("uin", "").lstrip("o")
+    return jar.get("uin", "").lstrip("o"), jar
 
 
-def write_config(area, roleid):
-    """生成 config.json, 奖励和时间用默认值(可在 GitHub Variables 里改)"""
-    cfg = {}
-    if CFG_FILE.exists():
+def upsert_role(area, roleid, playername, jar, uin):
+    """把当前登录角色写入 roles.json。
+
+    同一 QQ 的所有旧角色统一换上新 cookie(登录态是账号级的);
+    同 (uin, roleid) 的条目原地更新, 否则追加新角色。
+    """
+    data = {"defaults": dict(autosign.DEFAULTS), "roles": []}
+    if ROLES_FILE.exists():
         try:
-            cfg = json.loads(CFG_FILE.read_text("utf-8"))
+            data = json.loads(ROLES_FILE.read_text("utf-8"))
         except Exception:
-            cfg = {}
-    cfg["area"] = area
-    cfg["roleid"] = roleid
-    cfg.setdefault("gift_index", 3)
-    cfg.setdefault("run_time", "09:05")
-    cfg.setdefault("push_key", "")
-    CFG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
-    return cfg
+            pass
+    data.setdefault("defaults", {})
+    for k, v in autosign.DEFAULTS.items():
+        data["defaults"].setdefault(k, v)
+    roles = data.setdefault("roles", [])
+    for r in roles:
+        if r.get("uin") == uin:
+            r["cookies"] = dict(jar)
+    for r in roles:
+        if r.get("uin") == uin and r.get("roleid") == roleid:
+            r["area"] = area
+            if playername:
+                r["name"] = playername
+            break
+    else:
+        roles.append({"name": playername or ("QQ" + uin), "uin": uin,
+                      "area": area, "roleid": roleid, "cookies": dict(jar)})
+    ROLES_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+    return data
 
 
-def fetch_gifts(area, roleid):
+def fetch_gifts(jar, area, roleid):
     """登录后拉取当前活动的奖励列表, 拿到序号->名称对照"""
     try:
-        if str(BASE) not in sys.path:
-            sys.path.insert(0, str(BASE))
-        import wuxia_autosign.autosign as autosign
-        cookie, skey, _ = autosign.load_cookies()
-        resp = autosign.emit(cookie, autosign.calc_gtk(skey), autosign.FLOW_INIT, area, roleid)
+        resp = autosign.emit(autosign.cookie_header(jar), autosign.calc_gtk(jar["skey"]),
+                             autosign.FLOW_INIT, area, roleid)
         return autosign.parse_init(resp)[2]
     except Exception:
         return []
@@ -177,18 +200,19 @@ def b64(path):
 
 
 def emit_secret_files():
-    """把两段 Secrets 内容写成文件并打印, 方便直接复制"""
+    """把 Secret 内容写成文件并打印, 方便直接复制"""
     out = {}
     for name, src in SECRET_FILES:
         p = BASE / (name + ".txt")
-        content = b64(src)
-        p.write_text(content, "utf-8")   # 单文件单行内容, 不含换行
+        p.write_text(b64(src), "utf-8")   # 单文件单行内容, 不含换行
         out[name] = p
     return out
 
 
-def print_result(files, cfg, uin, area, gifts):
-    gift_idx = cfg.get("gift_index", 3)
+def print_result(files, data, uin, area, gifts):
+    defaults = data.get("defaults", {})
+    roles = data.get("roles", [])
+    gift_idx = defaults.get("gift_index", 3)
     gift_name = ""
     if gifts and 1 <= gift_idx <= len(gifts):
         gift_name = gifts[gift_idx - 1]["name"]
@@ -196,26 +220,29 @@ def print_result(files, cfg, uin, area, gifts):
     print("\n" + "=" * 66)
     print("[登录信息已生成] 接下来照着做 3 步就全部搞定")
     print("=" * 66)
-    print("账号 QQ: %s   大区: %s   角色: %s" % (mask(uin), area, mask(cfg["roleid"], 4, 4)))
+    print("本次登录 QQ: %s   大区: %s   角色: %s" % (mask(uin), area, mask(roles[-1]["roleid"], 4, 4)))
+    print("roles.json 里现在有 %d 个角色:" % len(roles))
+    for r in roles:
+        print("    - %s (QQ%s %s区)" % (r.get("name", "?"), r.get("uin", "?"), r.get("area", "?")))
     print("")
-    print("已生成两个文件, 用记事本打开后 Ctrl+A / Ctrl+C 全选复制即可:")
-    for name in ("WUXIA_STATE", "WUXIA_CONFIG"):
-        print("    %-14s -> %s" % (name, files[name]))
+    print("已生成 Secret 文件, 用记事本打开后 Ctrl+A / Ctrl+C 全选复制即可:")
+    print("    %-14s -> %s" % ("WUXIA_ROLES", files["WUXIA_ROLES"]))
     print("")
-    print("或者在下面直接照抄(每段都是一整行, 不要漏字符):\n")
-    for name in ("WUXIA_STATE", "WUXIA_CONFIG"):
-        print("----- %s -----" % name)
-        print(b64(dict(SECRET_FILES)[name]))
-        print("----- %s 结束 -----\n" % name)
+    print("或者在下面直接照抄(一整行, 不要漏字符):\n")
+    print("----- WUXIA_ROLES -----")
+    print(b64(ROLES_FILE))
+    print("----- WUXIA_ROLES 结束 -----\n")
 
     print("=" * 66)
-    print("第 1 步 (必做): 把上面两段内容填到 GitHub")
+    print("第 1 步 (必做): 把上面这段内容填到 GitHub")
     print("=" * 66)
     print("仓库页面 -> Settings -> Secrets and variables -> Actions")
     print("         -> New repository secret")
     print("")
-    print("    Name 填 WUXIA_STATE  , Secret 框粘贴第 1 段")
-    print("    Name 填 WUXIA_CONFIG , Secret 框粘贴第 2 段")
+    print("    Name 填 WUXIA_ROLES , Secret 框粘贴上面那行")
+    print("    (旧版的 WUXIA_STATE / WUXIA_CONFIG 可以删掉了)")
+    print("")
+    print("    想再加角色: 换账号/角色重新跑一次 python login.py , 再粘一次即可。")
     print("")
 
     print("=" * 66)
@@ -233,8 +260,10 @@ def print_result(files, cfg, uin, area, gifts):
         for i in range(1, 9):
             print("        %d%s" % (i, "  <-- 当前默认" if i == gift_idx else ""))
         print("        (没读到今天的奖励名称, 序号以游戏活动页从上往下数为准)")
-    print("\n    当前默认: 第 %d 个%s。跳过第 2 步就一直用它。"
-          % (gift_idx, ("（%s）" % gift_name) if gift_name else ""))
+    print("\n    当前默认: 第 %d 个%s。跳过第 2 步就一直用它。" %
+          (gift_idx, ("（%s）" % gift_name) if gift_name else ""))
+    print("    说明: 这个变量对所有角色生效; 想给单个角色固定奖励,")
+    print("          可以在 roles.json 对应角色里加 \"gift_index\": 序号。")
     print("")
 
     print("=" * 66)
@@ -245,23 +274,23 @@ def print_result(files, cfg, uin, area, gifts):
     print("    Name 填 WUXIA_RUN_TIME")
     print("    Value 填 24 小时制的北京时间, 例如 09:05 / 12:00 / 22:30")
     print("")
-    print("    当前默认: %s。跳过第 3 步就一直用它。" % cfg.get("run_time", "09:05"))
+    print("    当前默认: %s。跳过第 3 步就一直用它。" % defaults.get("run_time", "09:05"))
     print("    说明: 只看小时, 分钟写什么都一样; 实际执行会在该小时的 05 分左右,")
-    print("          遇到 GitHub 排队时可能晚十几分钟, 属正常。")
+    print("          遇到 GitHub 排队时可能晚十几分钟, 属正常。所有角色一起跑。")
     print("")
     print("    顺带可以在这里加 WUXIA_PUSH_KEY = Server酱的 SendKey (<https://sct.ftqq.com>),")
     print("    填了以后签到成功/失败会推到微信; 不填就不推送。")
     print("")
 
     print("=" * 66)
-    print("最后: 到 Actions 页面手动 Run workflow 跑一次, 看到『许愿成功』就全部搞定。")
+    print("最后: 到 Actions 页面手动 Run workflow 跑一次, 看到每个角色『许愿成功』就搞定。")
     print("=" * 66)
-    print("[!] 上面两段内容和 state.json / config.json / 两个 .txt 都是你的私人登录凭证,")
+    print("[!] 上面那段内容和 roles.json / WUXIA_ROLES.txt 都是你的私人登录凭证,")
     print("    不要发给任何人, 也不要上传仓库(已被 .gitignore 自动忽略)。")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="天刀周周载愿 - 本地登录助手")
+    ap = argparse.ArgumentParser(description="天刀周周载愿 - 本地登录助手(多角色)")
     ap.add_argument("--qr", action="store_true", help="扫码登录(仅限已成功登录过的情况)")
     ap.add_argument("--headed", action="store_true", help="网页登录(默认, 推荐)")
     ap.add_argument("--timeout", type=int, default=300, help="等待登录的秒数(默认300)")
@@ -283,7 +312,7 @@ def main():
         print("      页面已在后台打开, 马上生成二维码给你扫。")
 
     time.sleep(4)
-    area, roleid = wait_login(mode, args.timeout)
+    area, roleid, playername = wait_login(mode, args.timeout)
     if not roleid:
         cli("close")
         sys.exit("\n[!] 等待超时, 没有检测到登录。\n"
@@ -291,14 +320,14 @@ def main():
                  "    如果是扫码方式, 记得扫完要在手机上点『确认登录』。")
 
     print("\n[2/3] 登录成功, 正在保存登录态...")
-    uin = save_state()
-    cfg = write_config(area, roleid)
-    gifts = fetch_gifts(area, roleid)
+    uin, jar = save_state()
+    data = upsert_role(area, roleid, playername, jar, uin)
+    gifts = fetch_gifts(jar, area, roleid)
 
     print("\n[3/3] 正在生成 GitHub 需要的内容...")
     files = emit_secret_files()
     cli("close")
-    print_result(files, cfg, uin, area, gifts)
+    print_result(files, data, uin, area, gifts)
 
 
 if __name__ == "__main__":
