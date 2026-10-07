@@ -159,9 +159,29 @@ skey 由 ptlogin2 服务端签发，**本地无法续签**，寿命跟随 QQ 会
 
 | 通道 | 结果 |
 |---|---|
-| 游戏内活动页（QBrowser + 游戏 IPC 背书） | ✅ 唯一可用，`harvest.py` 已产品化 |
+| 游戏内活动页（QBrowser + 游戏 IPC 背书） | ✅ `harvest.py` 已产品化 |
 | 长期正本自换（p_skey/pt4_token/ptcz + headless 开活动页） | ❌ `proxy.html` 只搬运正本不签发；无 skey 时页面退回扫码登录 |
-| QQ 客户端桥（`localhost.ptlogin2.qq.com:4301`） | ❌ NTQQ 要求 `localhost.sec.qq.com:9410` 安全握手 + `pt_local_tk` 校验，400 拒绝；页面自身在 chromium 里也走不通（`ERR_NAME_NOT_RESOLVED`/cert/握手多重障碍） |
+| QQ 客户端桥（`localhost.ptlogin2.qq.com:4301`），浏览器内 | ❌ chromium 的 Private Network Access 拦公网→localhost；sec 握手端口(9410/16873)本机未监听 |
+| **QQ 客户端桥，纯 HTTP 复刻** | ✅ **打通**（见 §8.2），`sso.py` 已产品化 |
 | 带活 skey 的保活访问 | ✅ 会话黏性：跨游戏重启/跨浏览器重开活动页均续同一 skey，直到服务端会话死透 |
 
-结论：skey 签发权在 ptlogin2，背书方只有游戏进程；`p_skey/pt4_token` 是被搬运的长期登录态而非可独立兑现的续签凭证。`renew.py` 据此定位为"会话保活/体检"而非续签器。
+结论：skey 签发权在 ptlogin2，背书方有游戏进程（harvest）和 QQNT 客户端桥（sso）；`p_skey/pt4_token` 本身不能独立兑换新 skey，但可以通过客户端桥重新签发。`renew.py` 据此定位为"会话保活/体检"。
+
+### 8.2 QQNT 客户端桥 SSO 链路（纯 HTTP，2026-10-07 实测打通）
+
+QQNT 在线时监听 `127.0.0.1:4301`（另见 4001/4310/5283/8082/9210）。关键坑：桥请求**必须携带 `.ptlogin2.qq.com` 域 cookie**（尤其 `pt_local_token`）且 Referer 合法，否则一律 400 空响应；chromium 因 PNA 无法从页面发起，需在脚本层直连（自签证书要关校验）。
+
+```
+1. GET xui.ptlogin2.qq.com/cgi-bin/xlogin?appid=21000501&proxy_url=...milo/proxy.html
+   -> Set-Cookie: pt_local_token / pt_login_sig / pt_guid_sig
+2. GET localhost.ptlogin2.qq.com:4301/pt_get_uins?pt_local_tk=<token>   [带cookie+Referer]
+   -> var var_sso_uin_list=[{"uin":...,"nickname":...}]   (QQNT 当前登录账号)
+3. GET .../4301/pt_get_st?clientuin=<uin>&pt_local_tk=<token>
+   -> Set-Cookie: clientkey (96字符, 短时效)
+4. GET ssl.ptlogin2.qq.com/jump?clientuin&clientkey&appid=21000501&u1=<wuxia>&daid=8&keyindex=19
+   -> .qq.com 的 uin/skey/RK/ptcz
+5. GET 同上但 appid=716027609&u1=game.qq.com/comm-htdocs/milo/proxy.html
+   -> .game.qq.com 的 p_skey/p_uin/pt4_token（长期正本就是这么签出来的）
+```
+
+限制：签的是 **QQNT 当前登录账号**的凭据——目标账号（如游戏号）与 QQNT 登录号不一致时签出来也没用（`sso.py` 会校验后拒绝写入）。

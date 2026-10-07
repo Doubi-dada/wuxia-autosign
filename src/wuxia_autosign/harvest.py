@@ -57,7 +57,11 @@ import wuxia_autosign.autosign as autosign
 
 def log(msg):
     line = "[%s] %s" % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
-    print(line)
+    try:
+        print(line)
+    except UnicodeEncodeError:   # GBK 控制台打不出某些字符(如昵称里的 †)时降级
+        enc = sys.stdout.encoding or "gbk"
+        print(line.encode(enc, errors="replace").decode(enc))
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
