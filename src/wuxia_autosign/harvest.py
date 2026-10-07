@@ -141,32 +141,18 @@ def try_jar(args, data):
 
 
 def try_sso(data):
-    """通道2: QQNT 桥 SSO(见 sso.py)。返回 updated / ok / fail"""
-    from wuxia_autosign.sso import SsoClient   # 延迟导入
+    """通道2: QQNT 桥 SSO 多账号(见 sso.py)。返回 updated / ok / fail"""
+    from wuxia_autosign.sso import update_roles   # 延迟导入
     try:
-        uin, nick, jar = SsoClient().mint()
+        updated, matched = update_roles(data)
     except RuntimeError as e:
         log("[sso] %s" % e)
         return "fail"
-    log("[sso] 签发成功: QQ=%s(%s) 含正本=%s"
-        % (autosign.mask(uin), nick, "是" if jar.get("pt4_token") else "否"))
-    matched = _match(data, uin)
-    if not matched:
-        log("[sso] QQNT 当前登录的 QQ%s 不在 roles.json, 放弃"
-            "(想给该号签到先用它跑一次 login.py; 或在 QQNT 里登录游戏账号)" % autosign.mask(uin))
-        return "fail"
-    ok, info = probe(jar, matched[0])
-    if not ok:
-        log("[sso] 新签凭据探测失败(%s)" % info)
-        return "fail"
-    changed = any(r.get("cookies", {}).get("skey") != jar.get("skey") for r in matched)
-    if not changed:
-        log("[sso] 凭据与当前一致(%s)" % info)
+    if updated:
+        return "updated"
+    if matched:
         return "ok"
-    for r in matched:
-        r["cookies"] = dict(jar)
-    log("[sso] 已更新 %d 个角色的凭据(%s)" % (len(matched), info))
-    return "updated"
+    return "fail"
 
 
 def harvest_once(args):
