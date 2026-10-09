@@ -1,228 +1,216 @@
 # 天刀「周周载愿」自动签到 · 使用手册
 
-> 全程跟着做，大约 10 分钟。弄好之后**不用管了**，GitHub 每天替你自动签到、周末自动领奖。
+> 基础配置约 10 分钟；再做第 6 步的「全自动凭证维护」后，日常**什么都不用管**。
 > 你不需要会编程，也不用装 git，只要会「复制粘贴」。
 
 ---
 
-## 它会替你做什么
+## 系统是怎么跑的
 
 ```
-你自己的电脑：只用来登录一次，得到一段账号凭证
-        ↓ 复制粘贴
-GitHub：保存凭证，每小时自动运行一次签到脚本
+你的电脑(每天开着 QQ 即可)
+  └─ 凭证管家 harvest：每小时体检账号凭证，失效就自动续新
+        ↓ 自动更新
+GitHub（免费帮你定时干活）
+  └─ Actions：每天 09:05 左右替所有角色许愿 / 周末领奖，可推送到微信
         ↓
-腾讯游戏服务器：完成当日许愿 / 周末一键领奖
+腾讯游戏服务器
 ```
 
-- 你的电脑**不需要开着**。
-- 默认每天**北京时间 09:05 左右**执行一次；周末会顺便领奖。
-- 凭证会过期（几天到几十天不等），过期后重做「第 3 步」即可。
+- 你的电脑**不需要为了签到而开机**——签到全在 GitHub 上跑；电脑上的管家只负责让凭证不过期。
+- 支持多个 QQ / 多个角色一起签。
+- 签到结果可以用「Server酱」推送到微信。
 
 ---
 
 ## 第 1 步：把代码变成你自己的仓库
 
-用浏览器打开本项目仓库地址，点右上角的 **Fork** → **Create fork**。
+用浏览器打开本项目仓库，点右上角 **Fork** → **Create fork**，几秒后你就有了自己的一份。
 
-几秒后你就有了一个一模一样的仓库，接下来全在你自己的仓库里操作。
+> 想更安全：Settings → 拉到最底 General → Danger Zone → Change visibility 改成 **Private**。
 
-> 建议 Fork 后在 Settings → 最下面 Danger Zone 之外先确认仓库类型：想更安全就选 **Private（私有）**。
+## 第 2 步：在电脑上装两个东西（每台电脑只做一次）
 
----
+**2.1 安装 Python**：打开 <https://www.python.org/downloads/> 下载最新版，安装时**一定勾选** `☑ Add python.exe to PATH`。
 
-## 第 2 步：在电脑上安装两个东西（每台电脑只做一次）
-
-### 2.1 安装 Python
-
-打开 <https://www.python.org/downloads/> 下载最新版，安装时**一定勾选**：
-
-```
-☑ Add python.exe to PATH
-```
-
-### 2.2 安装 Node.js
-
-打开 <https://nodejs.org> 下载 **LTS 版**，一路下一步装完。
-
-### 2.3 安装浏览器工具
-
-打开「开始菜单 → 输入 `powershell` → 回车」，在窗口里粘贴下面两行（第二行要点几分钟，别关窗口）：
+**2.2 安装浏览器工具**：「开始菜单 → 输入 `powershell` → 回车」，粘贴下面两行（第二行要几分钟，别关窗口）：
 
 ```powershell
-npm install -g @playwright/cli
-playwright-cli install
+pip install playwright
+python -m playwright install chromium
 ```
 
-> 如果提示 `npm 不是命令`，说明 Node.js 没装好，重启一次电脑再试。
-
----
+> 提示 `'pip' 不是命令`：Python 没装好（2.1 的勾没打），重装即可。
+> 用 uv 管环境的话第一行换成 `uv pip install playwright`。
 
 ## 第 3 步：在自己电脑上登录一次
 
-### 3.1 把代码弄到本地
+**3.1 拿代码**：在你 Fork 的仓库页面 **Code → Download ZIP**，解压到好找的地方（例如 `D:\wuxia-autosign`）。
+在解压出来的文件夹里点一下顶部**地址栏**，输入 `powershell` 回车，直接在这个文件夹打开黑窗口。
 
-在你自己 Fork 的仓库页面：**Code → Download ZIP**，下载后**右键解压**到一个好找的地方，例如 `D:\wuxia-autosign`。
-
-打开解压出来的文件夹，点一下顶部**地址栏**，输入 `powershell` 后回车 —— 会直接在这个文件夹里打开黑窗口。
-
-### 3.2 一条命令开始登录
+**3.2 开始登录**：
 
 ```powershell
-python login.py
+python src/wuxia_autosign/login.py
 ```
 
-它会问你用哪种方式：
+直接回车（= 选 1 网页登录）会弹出浏览器窗口，在里面扫码或点头像登录；**首次登录**页面可能让你选大区，跟着选一下。登录成功后不用别的操作，程序每 5 秒自动检测，检测到就继续。
+
+看到这个就成功了：
 
 ```
-请选择登录方式:
-  1) 网页登录【推荐, 首次登录必须选这个】: 弹出浏览器窗口, 自己扫码或点头像登录
-  2) 扫码登录: 程序生成二维码图片(已经成功登录过才用这个)
-
-注意: 首次登录不要选扫码登录! 因为首次登录后页面上还要手动选一次大区,
-      二维码模式下脚本检测不到这一步, 会卡住。
+[登录信息已生成] 接下来照着做 3 步就全部搞定
+本次登录 QQ: 220*****28   大区: 2001   角色: 4643***********1906
+roles.json 里现在有 1 个角色:
+    - 月心澜 (QQ2200455428 2001区)
 ```
 
-**直接回车**（就是选 1，网页登录）。
+> 想再加角色/再加一个 QQ：换账号（或游戏里换角色后再登录一次网页）重跑一遍 `login.py` 即可，所有角色每天一起签。
 
-随即会弹出一个浏览器窗口，你在里面扫码 / 点头像登录就行。
-首次登录页面可能会让你**选大区**，跟着点一下，然后等着，脚本每 5 秒自动检测一次，检测到就继续。
+## 第 4 步：把凭证填到 GitHub
 
-> 也可以跳过选择：`python login.py --headed` 直接网页登录。
+仓库页面 → **Settings → Secrets and variables → Actions → New repository secret**：
 
-### 3.3 看到这个就成功了
-
-```
-账号 QQ: 146*****25   大区: 1002   角色: 1154************2077
-
-已生成两个文件, 用记事本打开后 Ctrl+A / Ctrl+C 全选复制即可:
-    WUXIA_STATE    -> D:\wuxia-autosign\WUXIA_STATE.txt
-    WUXIA_CONFIG   -> D:\wuxia-autosign\WUXIA_CONFIG.txt
-```
-
-窗口下面会自动打印**照着做的 3 步**：到 GitHub 上填什么、填哪里都写好了，
-下面第 4 步就是照抄这几步。复制内容最稳的办法是双击 `.txt` → `Ctrl+A` → `Ctrl+C`，
-不要手动选半行，漏一个字符就会失败。
-
----
-
-## 第 4 步：照着窗口里的 3 步填 GitHub
-
-### 第 1 步（必做）：填两个 Secrets
-
-**Settings → Secrets and variables → Actions → New repository secret**，填两次：
-
-| 第几次 | Name 框里填 | Secret 框里粘贴的内容 |
-|---|---|---|
-| 第 1 次 | `WUXIA_STATE` | `WUXIA_STATE.txt` 里的整行内容 |
-| 第 2 次 | `WUXIA_CONFIG` | `WUXIA_CONFIG.txt` 里的整行内容 |
-
-填完页面应该能看到 `WUXIA_STATE`、`WUXIA_CONFIG` 两个名字。
-
-### 第 2 步（想换奖励才做）：选每天许愿的奖励
-
-还是那个页面，点上面的 **Variables 标签页 → New repository variable**：
-
-- **Name** 填 `WUXIA_GIFT_INDEX`
-- **Value** 填一个数字，对应活动里从上往下数的奖励：
-
-| Value | 奖励 |
+| Name | Secret 粘贴什么 |
 |---|---|
-| `1` | 碎银/金*666 |
-| `2` | 随机经纬宝箱*20 |
-| `3` | 铸神令*30 |
-| `4` | 周享兑换券*3 |
-| `5` | 精品随机琅纹宝箱*5 |
-| `6` | 鉴赏之心*80 |
-| `7` | 金色师妹心法残页自选礼*1 |
-| `8` | 琢磨材料自选礼*50 |
+| `WUXIA_ROLES` | 窗口里提示的 `WUXIA_ROLES.txt` 整行内容（双击文件 → Ctrl+A → Ctrl+C 最稳） |
 
-> 以上名称以登录时窗口里列出的为准，游戏换奖励时以窗口显示为准。
-> **跳过这一步就沿用默认值**（窗口里标了「当前默认」的那一行）。
+三个**可选** Variables（同一个页面点上面的 Variables 标签页）：
 
-### 第 3 步（想改时间才做）：设每天几点签到
+| Name | 作用 | 默认 |
+|---|---|---|
+| `WUXIA_GIFT_INDEX` | 每天许愿第几个奖励（1~8，登录窗口会列出对照） | 3 |
+| `WUXIA_RUN_TIME` | 每天几点签（北京时间，只看小时） | 09:05 |
+| `WUXIA_PUSH_KEY` | Server酱 SendKey，签到结果推微信（建议放 Secrets） | 不推送 |
 
-还是那个 Variables 页面，**New repository variable**：
+> 想给不同角色固定不同奖励：编辑 `src/wuxia_autosign/roles.json`，在对应角色里加一行 `"gift_index": 5`。
 
-- **Name** 填 `WUXIA_RUN_TIME`
-- **Value** 填 24 小时制的北京时间，例如 `09:05` / `12:00` / `22:30`
+## 第 5 步：跑一次验证
 
-只看小时，分钟写什么都一样；实际执行在该小时的 05 分左右，GitHub 排队时可能晚十几分钟，属正常。
-**跳过这一步就用默认的 09:05。**
+仓库顶部 **Actions** → 若有黄色提示条点绿色按钮启用 → 左侧「天刀周周载愿自动签到」→ 右边 **Run workflow**（分支 main）→ 等一分钟左右看日志：
 
-顺带可以在这里加 `WUXIA_PUSH_KEY` = Server 酱 SendKey（<https://sct.ftqq.com> 微信登录后可复制），
-填了以后签到成功/失败会推到微信；不填就不推送。
-**SendKey 属于敏感信息，建议填在 Secrets 标签页而不是 Variables**（两个位置都能识别，优先读 Secrets）。
+```
+[月心澜] QQ=220*****28 大区=2001 角色=4643***********1906
+奖励序号=3 今日周四 已许愿=False 待领奖=0
+许愿成功: 铸神令*30
+```
 
-> 这三项改完**下一次自动运行就生效**，不用重新登录、不用重跑 `python login.py`。
+看到「许愿成功」就完成了。日志若写 `未到设定时间 09:05` 属正常——说明配置已生效、还没到点，它会在设定小时的 05 分左右真正执行。
+
+## 第 6 步（推荐）：全自动凭证维护，之后不再扫码
+
+第 3 步的凭证会过期（几天到几十天）。配置本步骤后，电脑会自动续期并自动更新 GitHub，**从此不再需要扫码登录**。
+
+**6.1 建 GitHub 访问令牌**（用于自动改 Secret）：
+GitHub → 头像 → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token：
+
+- Repository access：Only select repositories → 勾选你的 wuxia-autosign 仓库
+- Permissions → Repository permissions → **Secrets → Read and write**
+
+生成后把整行令牌（`github_pat_` 开头）用记事本存成文件 `src/wuxia_autosign/.gh_token`（一行；该文件已被 gitignore，不会被上传）。
+
+**6.2 装加密依赖**（自动改 Secret 需要）：
+
+```powershell
+uv pip install pynacl      # 或 pip install pynacl
+```
+
+**6.3 注册每小时自动任务**：
+
+```powershell
+python src/wuxia_autosign/harvest.py --install-task
+```
+
+立刻手动跑一次确认：
+
+```powershell
+python src/wuxia_autosign/harvest.py --once --sync
+```
+
+看到 `已通过 GitHub API 更新 Secret WUXIA_ROLES` 即全部打通。
+
+**6.4 日常只需保持一件事**：电脑上 **QQ 客户端（QQNT）里登录着游戏对应的 QQ 号**（多开也行）。管家每小时的动作：
+
+```
+体检现有凭证 → 全部有效就收工
+            → 有失效：先试游戏内嵌浏览器缓存(玩游戏时开过活动页就有货)
+                      再走 QQ 在线桥签发一套全新凭证
+            → 自动更新本地 + GitHub
+```
+
+运行日志在 `src/wuxia_autosign/harvest.log`；想卸载任务：`python src/wuxia_autosign/harvest.py --uninstall-task`。
 
 ---
 
-## 第 5 步：启动并验证
+## 多账号 / 多角色速查
 
-1. 仓库顶部 **Actions**。
-2. 如果看到黄色提示条 `Workflows aren't being run on this fork`，点绿色按钮 **I understand my workflows, go ahead and enable them**。
-3. 左边点 **天刀周周载愿自动签到** → 右边 **Run workflow** → 再点绿色 **Run workflow**。
-4. 等一分钟左右，点进去看日志，出现下面这样就是成功：
-
-```
-账号QQ=146*****25 大区=1002 角色=1154************2077
-配置: 奖励序号=4 执行时间=09:05
-今日周四 已许愿=False 待领奖=0
-许愿成功: 周享兑换券*3
-```
-
-看到「许愿成功」就**全部搞定**了。删掉那两个 `.txt` 文件也不影响，GitHub 里已经存好了。
-日志里的「配置」一行就是它实际生效的奖励序号和时间，改了 Variables 可以在这里确认。
+| 想做什么 | 怎么做 |
+|---|---|
+| 加一个角色 | 游戏里切角色 → 重跑 `login.py` → 重新粘一次 `WUXIA_ROLES` Secret |
+| 加一个 QQ 账号 | QQNT 多开登录该号 → 重跑 `login.py` → 粘 Secret |
+| 看电脑上有哪些 QQ 在线 | `python src/wuxia_autosign/sso.py --show` |
+| 体检凭据死活 | `python src/wuxia_autosign/renew.py` |
+| 本地立刻签一次 | `python src/wuxia_autosign/autosign.py --claim-only`（只看状态不许愿）/ 不带参数（单角色会让你选奖励） |
 
 ---
 
-## 出问题怎么办
+## 常见问题
 
 | 现象 | 怎么办 |
 |---|---|
-| 日志写着 `登录态已失效(iRet=101)` | **最常见**。凭证过期了，在本机重做第 3 步，然后把新的 `WUXIA_STATE.txt` 内容更新到 Secret `WUXIA_STATE` |
-| 日志写着 `账号未绑定大区(iRet=99998)` | 这个号没在游戏活动页登录过。浏览器打开 <https://wuxia.qq.com/cp/a20230309_98549/index.html> 登录一次，然后再跑一次第 3 步 |
-| 日志出现 `base64` 相关报错 | 复制的内容不完整。用记事本全选复制，别漏、也别多加空格或换行 |
-| 黑窗口提示 `没有检测到 playwright-cli` | Node.js 没装好，重开窗口或重启电脑，重做第 2.3 步 |
-| 一直显示 `等待登录中...` | 看看浏览器窗口是不是停在「请选择大区」，手动选一下；或者确认手机上点了「确认登录」 |
-| 日志写 `未到设定时间 09:05` | 正常，说明配置已生效、只是还没到点，脚本自己退出了 |
-| Actions 页面没有定时任务在跑 | 按第 5 步第 2 条点绿色按钮启用；长期无活动的仓库会被暂停，手动跑一次即可恢复 |
-| 想换 QQ / 换角色 | 重做第 3 步（登录新号），然后**两个 Secret 都要更新** |
-
----
-
-## 安全须知（请务必看）
-
-1. `WUXIA_STATE.txt`、`WUXIA_CONFIG.txt`、`state.json`、`config.json` 里都是你的**私人登录凭证**，拿到的人可以登录你的游戏账号。**不要发给任何人、不要传到群或网盘**。
-2. 这四个文件已经被项目屏蔽（`.gitignore`），git 永远不会自动上传它们，你也别手动绕过去提交。
-3. 运行日志里的 QQ 号、角色 ID 是打码显示的。
-4. 建议把仓库设为 **Private（私有）**；如果是 Fork 别人的仓库，自己建一个私有副本最省心。
-5. 仓库公开时：**不要在描述、README、Issue 里写自己的 QQ 号**；贴日志前先看一眼有没有账号信息。
-6. 提 Issue 求助时，只贴报错那几行即可，不要贴 `WUXIA_STATE.txt` / `config.json` 的内容。
+| 日志 `登录态已失效(iRet=101)` | 配了第 6 步：确认 QQNT 登着游戏号，等下个整点或手动 `harvest.py --once --sync`；没配：重做第 3 步并更新 Secret |
+| 日志 `账号未绑定大区(iRet=99998)` | 该号没在活动页登录过：浏览器打开 <https://wuxia.qq.com/cp/a20230309_98549/index.html> 登录选区一次，再跑第 3 步 |
+| `base64` 相关报错 | 复制的 Secret 内容不完整：双击 `.txt` → Ctrl+A → Ctrl+C，别手动选半行 |
+| 提示 `没有安装 Python 版 playwright` / `chromium 内核不可用` | 按提示执行 `pip install playwright` 和 `python -m playwright install chromium`（见 2.2） |
+| 一直 `等待登录中...` | 浏览器窗口是否停在「选择大区」；扫码方式记得在手机上点「确认登录」 |
+| 日志 `未到设定时间 09:05` | 正常，到点自动执行 |
+| Actions 没有定时跑 | 按第 5 步启用 workflows；长期无活动仓库会被暂停，手动跑一次即恢复 |
+| 自动同步提示 `GitHub API 拒绝: HTTP 403` | PAT 权限不对：确认 Fine-grained token 勾了本仓库 + Secrets Read and write（见 6.1），改完 Update token 即可，不用换文件 |
+| `sso` 提示 `桥不可达` / `桥上没有在线账号` | QQ 客户端没开或没登录账号 |
+| 想换电脑 | 新电脑重做第 2 步 + 拷贝整个项目文件夹（含 `.gh_token`、roles.json）+ `--install-task` |
 
 ---
 
 ## 附：命令一览
 
 ```powershell
-python login.py                # 登录(默认网页登录, 推荐)
-python login.py --headed       # 跳过选择, 直接网页登录
-python login.py --qr           # 扫码登录(仅限之前已登录成功过)
-python login.py --timeout 600  # 放宽等待登录时间到 10 分钟
+python src/wuxia_autosign/login.py                # 登录/追加角色(默认网页登录)
+python src/wuxia_autosign/login.py --qr           # 扫码登录(仅限之前成功登录过)
+python src/wuxia_autosign/autosign.py             # 本地立刻签一次(单角色交互选奖励)
+python src/wuxia_autosign/autosign.py --claim-only# 只看状态/领奖, 不许愿
+
+python src/wuxia_autosign/harvest.py --once --sync   # 体检+收割+同步 GitHub(手动跑一次)
+python src/wuxia_autosign/harvest.py --install-task  # 注册每小时自动维护计划任务
+python src/wuxia_autosign/harvest.py --uninstall-task# 卸载计划任务
+python src/wuxia_autosign/sso.py --show              # 看桥上有哪些 QQ 在线
+python src/wuxia_autosign/renew.py                   # 会话体检
 ```
 
 ## 附：文件说明
 
 | 文件 | 作用 |
 |---|---|
-| `login.py` | 本地登录助手，生成凭证和两个 `.txt` |
-| `autosign.py` | 签到主程序（GitHub 上自动运行） |
-| `.github/workflows/autosign.yml` | 定时任务配置（每小时触发一次） |
-| `WUXIA_STATE.txt` | 第 4 步要复制的第 1 段内容 |
-| `WUXIA_CONFIG.txt` | 第 4 步要复制的第 2 段内容 |
-| `state.json` / `config.json` | 上面两个 `.txt` 的原始文件，属于隐私文件 |
-| `qr_login_*.png` | 扫码登录时用的一次性二维码，可删 |
+| `src/wuxia_autosign/login.py` | 本地登录助手（Python playwright，多角色追加） |
+| `src/wuxia_autosign/autosign.py` | 签到主程序（GitHub 上自动运行） |
+| `src/wuxia_autosign/harvest.py` | 凭证管家：体检 → 游戏缓存/QQ在线桥 收割 → 同步 GitHub |
+| `src/wuxia_autosign/sso.py` | QQ 客户端在线桥多账号签发（纯本地 HTTP，产出含长期票根） |
+| `src/wuxia_autosign/renew.py` | 会话保活体检（死了报警并指引） |
+| `.github/workflows/autosign.yml` | GitHub 定时任务配置（每小时触发） |
+| `WUXIA_ROLES.txt` | 第 4 步要复制的内容（= roles.json 的 base64） |
+| `src/wuxia_autosign/roles.json` | 所有角色的登录态+配置（隐私） |
+| `src/wuxia_autosign/.gh_token` | GitHub 访问令牌（隐私） |
+| `src/wuxia_autosign/harvest.log` | 凭证管家运行日志 |
+| `qr_login_*.png` | 扫码登录的一次性二维码，可删 |
+
+---
+
+## 安全须知（请务必看）
+
+1. `WUXIA_ROLES.txt`、`roles.json`、`state.json` 都是**私人登录凭证**，拿到的人可以登录你的游戏账号；`.gh_token` 是 GitHub 令牌，泄露等于别人能改你的仓库。**都不要发给任何人、不要传群/网盘。**
+2. 这些文件已被 `.gitignore` 屏蔽，git 不会自动上传，也别手动绕过。
+3. 运行日志里 QQ 号、角色 ID 均打码显示。
+4. 建议仓库设为 **Private**。
+5. 贴日志求助时只贴报错几行，不要贴凭证文件内容、不要在公开场合写自己的 QQ 号。
 
 ---
 
@@ -230,9 +218,9 @@ python login.py --timeout 600  # 放宽等待登录时间到 10 分钟
 
 本项目是爱好者编写的**非官方第三方工具**，与腾讯及《天涯明月刀》官方**没有任何关系**。
 
-- 它通过模拟浏览器请求调用游戏的**公开活动接口**，不使用外挂、不修改游戏客户端、不影响游戏平衡。
-- 即便如此，这类自动化请求仍有被官方**风控或限制**的可能，由此产生的一切后果由使用者自行承担。
-- 请妥善保管自己的登录凭证，因凭证泄露造成的损失与本项目无关。
+- 它通过调用游戏的**公开活动接口**完成签到，不使用外挂、不修改游戏客户端、不影响游戏平衡。
+- 即便如此，这类自动化请求仍有被官方**风控或限制**的可能，后果由使用者自行承担。
+- 请妥善保管自己的登录凭证，因泄露造成的损失与本项目无关。
 - 使用前请自行判断是否符合当地法律法规及游戏用户协议。
 
 ## License

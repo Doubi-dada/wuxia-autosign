@@ -20,14 +20,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: 还原登录态与配置
+      - name: 还原角色配置 (WUXIA_ROLES, 兼容旧版双 Secret)
         env:
+          WUXIA_ROLES: ${{ secrets.WUXIA_ROLES }}
           WUXIA_STATE: ${{ secrets.WUXIA_STATE }}
           WUXIA_CONFIG: ${{ secrets.WUXIA_CONFIG }}
         run: |
-          echo "$WUXIA_STATE" | base64 -d > state.json
-          echo "$WUXIA_CONFIG" | base64 -d > config.json
-          ls -l state.json config.json
+          mkdir -p src/wuxia_autosign
+          if [ -n "$WUXIA_ROLES" ]; then
+            echo "$WUXIA_ROLES" | base64 -d > src/wuxia_autosign/roles.json
+          else
+            echo "$WUXIA_STATE" | base64 -d > src/wuxia_autosign/state.json
+            echo "$WUXIA_CONFIG" | base64 -d > src/wuxia_autosign/config.json
+          fi
+          ls -l src/wuxia_autosign/
 
       # 下面几个是可选的 GitHub Variables, 填了就覆盖 config.json 里的同名设置,
       # 不填则用登录时生成的默认值(奖励序号3 / 时间09:05)
@@ -36,4 +42,4 @@ jobs:
           WUXIA_GIFT_INDEX: ${{ vars.WUXIA_GIFT_INDEX }}
           WUXIA_RUN_TIME: ${{ vars.WUXIA_RUN_TIME }}
           WUXIA_PUSH_KEY: ${{ vars.WUXIA_PUSH_KEY }}
-        run: python autosign.py --cron
+        run: python src/wuxia_autosign/autosign.py --cron
